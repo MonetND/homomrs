@@ -2,12 +2,20 @@ name: Build Adobe MRS
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: '忽略上游检查,强制重建'
+        type: boolean
+        default: false
   schedule:
-    # 每天 UTC 03:00 运行
-    - cron: "0 3 * * *"
+    # 每周三 UTC 03:00(北京时间周三 11:00)检查上游仓库是否更新
+    - cron: "0 3 * * 3"
 
 permissions:
   contents: write
+
+env:
+  UPSTREAM_REPO: ignaciocastro/a-dove-is-dumb
 
 jobs:
   build:
@@ -17,13 +25,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check upstream update
+        id: upstream
+        shell: bash
+        run: |
+          UPSTREAM_SHA="$(git ls-remote "https://github.com/${UPSTREAM_REPO}.git" HEAD | cut -f1)"
+          echo "Upstream HEAD: ${UPSTREAM_SHA}"
+
+          if [ -s .upstream-sha ] && [ "$(cat .upstream-sha)" = "$UPSTREAM_SHA" ]; then
+            echo "上游无更新,跳过构建"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "上游有更新(或首次运行),开始构建"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "$UPSTREAM_SHA" > .upstream-sha
+          fi
+
       - name: Download latest clash.yaml
+        if: steps.upstream.outputs.changed == 'true' || inputs.force == true
         run: |
           curl -fL \
-            "https://raw.githubusercontent.com/ignaciocastro/a-dove-is-dumb/main/clash.yaml" \
+            "https://raw.githubusercontent.com/${UPSTREAM_REPO}/main/clash.yaml" \
             -o clash.yaml
 
       - name: Get latest Mihomo version
+        if: steps.upstream.outputs.changed == 'true' || inputs.force == true
         id: mihomo
         shell: bash
         run: |
@@ -41,6 +67,7 @@ jobs:
           echo "Latest Mihomo: $VERSION"
 
       - name: Download Mihomo
+        if: steps.upstream.outputs.changed == 'true' || inputs.force == true
         shell: bash
         run: |
           VERSION="${{ steps.mihomo.outputs.version }}"
@@ -57,26 +84,29 @@ jobs:
           ./mihomo -v
 
       - name: Convert YAML to MRS
+        if: steps.upstream.outputs.changed == 'true' || inputs.force == true
         run: |
           ./mihomo convert-ruleset domain yaml clash.yaml adobe.mrs
 
       - name: Check result
+        if: steps.upstream.outputs.changed == 'true' || inputs.force == true
         run: |
           ls -lh clash.yaml adobe.mrs
           file adobe.mrs
 
       - name: Commit updated MRS
+        if: steps.upstream.outputs.changed == 'true' || inputs.force == true
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add adobe.mrs
+          git add adobe.mrs .upstream-sha
 
           if git diff --cached --quiet; then
             echo "No changes."
             exit 0
           fi
 
-          git commit -m "Update adobe.mrs"
+          git commit -m "Update adobe.mrs (upstream $(cut -c1-7 .upstream-sha))"
           git push

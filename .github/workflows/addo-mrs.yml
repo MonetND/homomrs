@@ -9,7 +9,7 @@ on:
         default: false
   schedule:
     # 每周三 UTC 03:00(北京时间周三 11:00)检查上游仓库是否更新
-    - cron: "0 3 * * 3"
+    - cron: "0 4 * * *"
 
 permissions:
   contents: write
